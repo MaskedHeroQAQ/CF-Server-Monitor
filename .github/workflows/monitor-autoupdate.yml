@@ -1,0 +1,80 @@
+name: Monitor automatic upgrade
+
+on:
+  schedule:
+    - cron: '30 23 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cf-server-monitor-production
+  cancel-in-progress: false
+
+jobs:
+  upgrade:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: deployment/monitor
+          fetch-depth: 0
+
+      - name: Merge official upstream without overwriting local configuration
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git remote add upstream https://github.com/huilang-me/CF-Server-Monitor.git
+          git fetch upstream main
+          git merge --no-edit upstream/main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci --ignore-scripts
+      - run: npm audit --audit-level=high
+      - run: npm run test:all
+      - run: npm run build:frontend
+
+      - name: Verify D1 recovery point
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+        run: |
+          npx --no-install wrangler d1 time-travel info cf-server-monitor-db --json > recovery-point.json
+          node -e 'const d=JSON.parse(require("fs").readFileSync("recovery-point.json")); if(!d.bookmark) throw new Error("D1 recovery point unavailable")'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: d1-recovery-point
+          path: recovery-point.json
+          retention-days: 7
+
+      - name: Deploy existing Worker and preserve runtime secrets
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+        run: npx --no-install wrangler deploy --keep-vars
+
+      - name: Verify frontend and both reporting agents
+        run: |
+          python3 - <<'PY'
+          import json, time, urllib.request
+          base = 'https://monitor.606677.xyz'
+          with urllib.request.urlopen(base, timeout=30) as response:
+              assert response.status == 200
+          with urllib.request.urlopen(base + '/__do/health', timeout=30) as response:
+              assert json.load(response)['ok'] is True
+          with urllib.request.urlopen(base + '/api/servers', timeout=30) as response:
+              servers = json.load(response)['servers']
+          assert {server['name'] for server in servers} == {'VMR', 'VMI'}
+          assert all(time.time() - server['last_updated'] / 1000 < 180 for server in servers)
+          print('Frontend, Durable Object and two fresh agents verified')
+          PY
+
+      - name: Retain validated upstream merge
+        run: git push origin HEAD:deployment/monitor
