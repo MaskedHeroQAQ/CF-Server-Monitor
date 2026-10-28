@@ -65,8 +65,8 @@ function envPlugin() {
   }
 }
 
-export default defineConfig({
-  plugins: [vue(), mkcert(), envPlugin()],
+export default defineConfig(({ mode }) => ({
+  plugins: [vue(), ...(mode === 'test' ? [] : [mkcert()]), envPlugin()],
   base: process.env.VITE_BASE || '/',
   resolve: {
     alias: {
@@ -98,4 +98,4 @@ export default defineConfig({
       '/__do': createWorkerProxy()
     }
   }
-})
+}))
