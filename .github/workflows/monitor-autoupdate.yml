@@ -69,11 +69,13 @@ jobs:
           python3 - <<'PY'
           import json, time, urllib.request
           base = 'https://monitor.606677.xyz'
-          with urllib.request.urlopen(base, timeout=30) as response:
+          opener = urllib.request.build_opener()
+          opener.addheaders = [('User-Agent', 'Mozilla/5.0')]
+          with opener.open(base, timeout=30) as response:
               assert response.status == 200
-          with urllib.request.urlopen(base + '/__do/health', timeout=30) as response:
+          with opener.open(base + '/__do/health', timeout=30) as response:
               assert json.load(response)['ok'] is True
-          with urllib.request.urlopen(base + '/api/servers', timeout=30) as response:
+          with opener.open(base + '/api/servers', timeout=30) as response:
               servers = json.load(response)['servers']
           assert {server['name'] for server in servers} == {'VMR', 'VMI'}
           assert all(time.time() - server['last_updated'] / 1000 < 180 for server in servers)
