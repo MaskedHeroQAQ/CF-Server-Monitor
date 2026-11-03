@@ -39,6 +39,14 @@ jobs:
           node-version: '22'
           cache: npm
 
+      - name: Reconcile dependency lock after upstream merge
+        run: |
+          npm install --package-lock-only --ignore-scripts
+          if ! git diff --quiet -- package-lock.json; then
+            git add package-lock.json
+            git commit -m "Reconcile dependency lock after upstream merge"
+          fi
+
       - run: npm ci --ignore-scripts
       - run: npm audit --audit-level=high
       - run: npm run test:all
